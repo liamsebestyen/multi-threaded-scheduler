@@ -25,6 +25,21 @@ typedef struct
 	pthread_t thread;
 } Train;
 
+typedef struct TrainNode
+{
+	Train *train;
+	struct StationQueueNode *next;
+	struct StationQueueNode *prev;
+} TrainNode;
+
+typedef struct
+{
+	TrainNode *head;
+	TrainNode *tail;
+	int size;
+	pthread_mutex_t lock_queue;
+} StationQueue;
+
 Train trains[1024];
 
 int num_trains = 0;
@@ -61,6 +76,8 @@ int read_file(const char *filename)
 		new_train.priority = get_priority(direction);
 		new_train.load_time = load_time;
 		new_train.cross_time = cross_time;
+		new_train.isReady = 0;
+		new_train.id = num_trains;
 		trains[num_trains] = new_train;
 		num_trains++;
 	}
@@ -92,8 +109,13 @@ int main(int argc, char *argv[])
 	printf("Read %d trains:\n", num_trains);
 	for (int i = 0; i < num_trains; i++)
 	{
-		printf("Train %d: direction=%c, load=%d, cross=%d\n",
-			   i, trains[i].direction, trains[i].load_time, trains[i].cross_time);
+		printf("Train %d: direction=%s, priority=%s, load_time=%d, cross_time=%d, isReady=%d\n",
+			   trains[i].id,
+			   trains[i].direction == EAST ? "EAST" : "WEST",
+			   trains[i].priority == HIGH ? "HIGH" : "LOW",
+			   trains[i].load_time,
+			   trains[i].cross_time,
+			   trains[i].isReady);
 	}
 
 	return 0;
