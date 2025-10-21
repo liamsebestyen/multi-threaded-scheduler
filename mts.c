@@ -40,6 +40,10 @@ typedef struct
 	pthread_mutex_t lock_queue;
 } StationQueue;
 
+Train trains[1024];
+
+int num_trains = 0;
+
 void enqueue(StationQueue *queue, Train *train)
 {
 	TrainNode *new_node = (TrainNode *)malloc(sizeof(TrainNode));
@@ -90,9 +94,20 @@ void dequeue(StationQueue *queue)
 	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
 }
 
-Train trains[1024];
+Train *peek(StationQueue *queue)
+{
+	Train **train;
+	if (queue->size == 0)
+	{
+		return NULL;
+	}
 
-int num_trains = 0;
+	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
+
+	return queue->head->train;
+
+	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+}
 
 Direction get_direction(char dir_char)
 {
