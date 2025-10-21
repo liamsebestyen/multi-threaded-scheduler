@@ -28,8 +28,8 @@ typedef struct
 typedef struct TrainNode
 {
 	Train *train;
-	struct StationQueueNode *next;
-	struct StationQueueNode *prev;
+	struct TrainNode *next;
+	struct TrainNode *prev;
 } TrainNode;
 
 typedef struct
@@ -39,6 +39,31 @@ typedef struct
 	int size;
 	pthread_mutex_t lock_queue;
 } StationQueue;
+
+void enqueue(StationQueue *queue, Train *train)
+{
+	TrainNode *new_node = (TrainNode *)malloc(sizeof(TrainNode));
+	new_node->train = train;
+	new_node->next = NULL;
+	new_node->prev = NULL;
+
+	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
+
+	if (queue->size == 0)
+	{
+		queue->head = new_node;
+		queue->tail = new_node;
+	}
+	else
+	{
+		queue->tail->next = new_node;
+		new_node->prev = queue->tail;
+		queue->tail = new_node;
+	}
+	queue->size++;
+
+	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+}
 
 Train trains[1024];
 
