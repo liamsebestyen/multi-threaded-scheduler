@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <time.h>
 
 typedef enum
 {
@@ -40,9 +41,12 @@ typedef struct
 	pthread_mutex_t lock_queue;
 } StationQueue;
 
+// Global variables - must be declared before functions
 Train trains[1024];
-
 int num_trains = 0;
+struct timespec start_time;
+pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
+FILE *output_file = NULL;
 
 void enqueue(StationQueue *queue, Train *train)
 {
@@ -69,11 +73,12 @@ void enqueue(StationQueue *queue, Train *train)
 	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
 }
 
-void dequeue(StationQueue *queue)
+// This will return the removed train for now, may not be needed.
+Train *dequeue(StationQueue *queue)
 {
 	if (queue->size == 0)
 	{
-		return;
+		return NULL;
 	}
 
 	pthread_mutex_lock(&queue->lock_queue); // Again maybe we lock this entire function later?
@@ -92,6 +97,8 @@ void dequeue(StationQueue *queue)
 	queue->size--;
 
 	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+
+	return temp->train;
 }
 
 Train *peek(StationQueue *queue)
@@ -107,6 +114,51 @@ Train *peek(StationQueue *queue)
 	return queue->head->train;
 
 	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+}
+
+// Don't love the timer implementation as of now.
+
+void init_timer()
+{
+	clock_gettime(CLOCK_MONOTONIC, &start_time);
+}
+
+long get_elapsed_tenths()
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+
+	long elapsed_sec = now.tv_sec - start_time.tv_sec;
+	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
+
+	return elapsed_sec * 10 + elapsed_nsec / 100000000;
+}
+
+void format_timestamp(long tenths, char *buffer)
+{
+	int minutes = tenths / 600; // 60 seconds * 10 tenths/sec
+	int remaining = tenths % 600;
+	int seconds = remaining / 10;
+	int tenth = remaining % 10;
+
+	sprintf(buffer, "%02d:%02d.%d", minutes, seconds, tenth);
+}
+
+void log_train_ready(Train *train)
+{
+	pthread_mutex_lock(&log_mutex);
+
+	long elapsed = get_elapsed_tenths();
+	char timestamp[13];
+	format_timestamp(elapsed, timestamp);
+
+	fprintf(output_file, "%s Train %2d is ready to go %s\n",
+			timestamp,
+			train->id,
+			train->direction == EAST ? "East" : "West");
+	fflush(output_file);
+
+	pthread_mutex_unlock(&log_mutex);
 }
 
 Direction get_direction(char dir_char)
@@ -165,6 +217,10 @@ int main(int argc, char *argv[])
 		fprintf(stderr, "Usage: %s <input_file>\n", argv[0]);
 		return 1;
 	}
+
+	// Initialize timer and output file
+	init_timer();
+	output_file = fopen("output.txt", "w");
 
 	if (!read_file(argv[1]))
 	{
