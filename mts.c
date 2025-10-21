@@ -65,6 +65,31 @@ void enqueue(StationQueue *queue, Train *train)
 	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
 }
 
+void dequeue(StationQueue *queue)
+{
+	if (queue->size == 0)
+	{
+		return;
+	}
+
+	pthread_mutex_lock(&queue->lock_queue); // Again maybe we lock this entire function later?
+
+	TrainNode *temp = queue->head;
+	queue->head = queue->head->next;
+	if (queue->head != NULL)
+	{
+		queue->head->prev = NULL;
+	}
+	else
+	{
+		queue->tail = NULL; // Queue is now empty
+	}
+	free(temp);
+	queue->size--;
+
+	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+}
+
 Train trains[1024];
 
 int num_trains = 0;
