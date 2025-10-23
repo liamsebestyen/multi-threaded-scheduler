@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <pthread.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef enum
 {
@@ -46,14 +47,18 @@ Train trains[1024];
 int num_trains = 0;
 struct timespec start_time;
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
-FILE *output_file = NULL;
+pthread_mutex_t start_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
+int threads_ready = 0;
+int start_flag = 0;
+FILE *output_file = NULL; // Initialize to NULL, open in main()
 
 void enqueue(StationQueue *queue, Train *train)
 {
 	TrainNode *new_node = (TrainNode *)malloc(sizeof(TrainNode));
 	new_node->train = train;
 	new_node->next = NULL;
-	new_node->prev = NULL;
+	new_node->prev = NULL; // Damn first time opening this file after the breakup...
 
 	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
 
@@ -131,7 +136,7 @@ long get_elapsed_tenths()
 	long elapsed_sec = now.tv_sec - start_time.tv_sec;
 	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
 
-	return elapsed_sec * 10 + elapsed_nsec / 100000000;
+	return elapsed_sec * 10 + (elapsed_nsec + 50000000) / 100000000;
 }
 
 void format_timestamp(long tenths, char *buffer)
@@ -159,6 +164,31 @@ void log_train_ready(Train *train)
 	fflush(output_file);
 
 	pthread_mutex_unlock(&log_mutex);
+}
+
+void *train_thread(void *arg)
+{
+	Train *train = (Train *)arg;
+
+	// Signal that this thread is ready
+	pthread_mutex_lock(&start_mutex);
+	threads_ready++;
+	pthread_cond_broadcast(&start_cond); // Broadcast instead of signal
+	// Wait for start signal
+	while (!start_flag)
+	{
+		pthread_cond_wait(&start_cond, &start_mutex);
+	}
+	pthread_mutex_unlock(&start_mutex);
+
+	// Simulate loading
+	usleep(train->load_time * 100000);
+
+	// Mark ready and log
+	train->isReady = 1;
+	log_train_ready(train);
+
+	return NULL;
 }
 
 Direction get_direction(char dir_char)
@@ -220,24 +250,38 @@ int main(int argc, char *argv[])
 
 	// Initialize timer and output file
 	init_timer();
-	output_file = fopen("output.txt", "w");
+	output_file = fopen("output.txt", "w"); // Open here, not at global scope
 
 	if (!read_file(argv[1]))
 	{
 		return 1;
 	}
 
-	printf("Read %d trains:\n", num_trains);
+	// Create all train threads
 	for (int i = 0; i < num_trains; i++)
 	{
-		printf("Train %d: direction=%s, priority=%s, load_time=%d, cross_time=%d, isReady=%d\n",
-			   trains[i].id,
-			   trains[i].direction == EAST ? "EAST" : "WEST",
-			   trains[i].priority == HIGH ? "HIGH" : "LOW",
-			   trains[i].load_time,
-			   trains[i].cross_time,
-			   trains[i].isReady);
+		pthread_create(&trains[i].thread, NULL, train_thread, &trains[i]);
 	}
+
+	// Wait until all threads are ready
+	pthread_mutex_lock(&start_mutex);
+	while (threads_ready < num_trains)
+	{
+		pthread_cond_wait(&start_cond, &start_mutex);
+	}
+	// Release all trains at once
+	start_flag = 1;
+	pthread_cond_broadcast(&start_cond);
+	pthread_mutex_unlock(&start_mutex);
+
+	// Wait for all trains to finish
+	for (int i = 0; i < num_trains; i++)
+	{
+		pthread_join(trains[i].thread, NULL);
+	}
+
+	// Cleanup
+	fclose(output_file);
 
 	return 0;
 }
