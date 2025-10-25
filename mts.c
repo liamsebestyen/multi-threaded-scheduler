@@ -53,6 +53,9 @@ int threads_ready = 0;
 int start_flag = 0;
 FILE *output_file = NULL; // Initialize to NULL, open in main()
 
+char *lastTrainDirection = NULL;
+char *secondLastTrainDirection = NULL;
+
 StationQueue *eastHighPriorityQueue;
 StationQueue *eastLowPriorityQueue;
 StationQueue *westHighPriorityQueue;
@@ -134,6 +137,54 @@ Train *dequeue(StationQueue *queue)
 	return temp->train;
 }
 
+Train *remove_train(StationQueue *queue, Train *train)
+{
+	if (queue->size == 0)
+	{
+		return NULL;
+	}
+
+	pthread_mutex_lock(&queue_mutex); // Use global mutex
+
+	TrainNode *current = queue->head;
+	while (current != NULL)
+	{
+		if (current->train == train)
+		{
+			// Found the train to remove
+			if (current->prev != NULL)
+			{
+				current->prev->next = current->next;
+			}
+			else
+			{
+				queue->head = current->next; // Update head if needed
+			}
+
+			if (current->next != NULL)
+			{
+				current->next->prev = current->prev;
+			}
+			else
+			{
+				queue->tail = current->prev; // Update tail if needed
+			}
+
+			free(current);
+			queue->size--;
+
+			pthread_mutex_unlock(&queue_mutex); // Use global mutex
+
+			return train;
+		}
+		current = current->next;
+	}
+
+	pthread_mutex_unlock(&queue_mutex); // Use global mutex
+
+	return NULL; // Train not found
+}
+
 Train *peek(StationQueue *queue)
 {
 	if (queue->size == 0)
@@ -144,6 +195,22 @@ Train *peek(StationQueue *queue)
 	pthread_mutex_lock(&queue_mutex); // Use global mutex
 
 	Train *result = queue->head->train;
+
+	pthread_mutex_unlock(&queue_mutex); // Use global mutex
+
+	return result;
+}
+
+Train *peek_two(StationQueue *queue)
+{
+	if (queue->size == 0 || queue->size == 1)
+	{
+		return NULL;
+	}
+
+	pthread_mutex_lock(&queue_mutex); // Use global mutex
+
+	Train *result = queue->head->next->train;
 
 	pthread_mutex_unlock(&queue_mutex); // Use global mutex
 
@@ -246,6 +313,133 @@ void *train_thread(void *arg)
 	return NULL;
 }
 
+void select()
+{
+	/*
+	Plan: Check the four queues with order of priority.
+	1. If two highest priority trains ready
+	*/
+
+	// Next steps, return the selected, logic to check for the starvation.
+	// Gonna need identical logic for the high priority trains as the low. Can you split to functions?
+
+	Train *cross = NULL;
+
+	int num_west_high = westHighPriorityQueue->size;
+	int num_east_high = eastHighPriorityQueue->size;
+	int num_west_low = westLowPriorityQueue->size;
+	int num_east_low = eastLowPriorityQueue->size;
+
+	int num_high = num_east_high + num_west_high;
+	int num_low = num_east_low + num_west_low;
+	int num_east = num_east_high + num_east_low;
+	int num_west = num_west_high + num_west_low;
+
+	if (num_east_high || num_west_high || num_east_low || num_west_low)
+		return;
+
+	// case the highest priority trains are the same direction
+
+	if (num_high == 1)
+	{
+		if (num_east_high)
+		{
+			cross = dequeue(eastHighPriorityQueue);
+		}
+		else
+		{
+			cross = dequeue(westHighPriorityQueue);
+		}
+	}
+	else if (num_high >= 2)
+	{
+		// We need to look if they are same direction or separate direction.
+		if (num_east_high >= 2)
+		{
+			Train *temp1 = peek(eastHighPriorityQueue);
+			Train *temp2 = peek_two(eastHighPriorityQueue);
+
+			if (temp1->load_time > temp2->load_time)
+			{
+				cross = remove_train(eastHighPriorityQueue, temp2);
+			}
+			else if (temp2->load_time > temp1->load_time)
+			{
+				cross = remove_train(eastHighPriorityQueue, temp1);
+			}
+			else
+			{
+				// They are equal dequeue the one that reads first
+
+				if (temp1->id < temp2->id)
+				{
+					cross = remove_train(eastHighPriorityQueue, temp1);
+				}
+				else
+				{
+					cross = remove_train(eastHighPriorityQueue, temp2);
+				}
+			}
+
+			cross = dequeue(eastHighPriorityQueue);
+		}
+		else if (num_west_high >= 2)
+		{
+			Train *temp1 = peek(westHighPriorityQueue);
+			Train *temp2 = peek_two(westHighPriorityQueue);
+
+			if (temp1->load_time > temp2->load_time)
+			{
+				cross = remove_train(westHighPriorityQueue, temp2);
+			}
+			else if (temp2->load_time > temp1->load_time)
+			{
+				cross = remove_train(westHighPriorityQueue, temp1);
+			}
+			else
+			{
+				// They are equal dequeue the one that reads first
+
+				if (temp1->id < temp2->id)
+				{
+					cross = remove_train(westHighPriorityQueue, temp1);
+				}
+				else
+				{
+					cross = remove_train(westHighPriorityQueue, temp2);
+				}
+			}
+
+			cross = dequeue(westHighPriorityQueue);
+		}
+		else
+		{
+			// They are opposite direction
+			// Check global variables
+			if (lastTrainDirection == NULL)
+			{
+
+				dequeue(westHighPriorityQueue);
+				lastTrainDirection = "WEST";
+			}
+			else if (lastTrainDirection == "EAST")
+			{
+
+				dequeue(westHighPriorityQueue);
+				secondLastTrainDirection = lastTrainDirection;
+				lastTrainDirection = "WEST";
+			}
+			else if (lastTrainDirection == "WEST")
+			{
+
+				dequeue(eastHighPriorityQueue);
+				secondLastTrainDirection = lastTrainDirection;
+				lastTrainDirection = "EAST";
+			}
+		}
+	}
+}
+
 Direction get_direction(char dir_char)
 {
 	return (dir_char == 'E' || dir_char == 'e') ? EAST : WEST;
@@ -330,7 +524,15 @@ int main(int argc, char *argv[])
 	pthread_cond_broadcast(&start_cond);
 	pthread_mutex_unlock(&start_mutex);
 
-	// Wait for all trains to finish
+	// Now main is the controller thread
+	/*
+	1. Monitor the queue's for a ready train (or maybe signal?)
+	2. Select highest priority train
+	3. Train cross (mutex)
+	4. Repeat until ==
+	5. Join all threads
+	*/
+
 	for (int i = 0; i < num_trains; i++)
 	{
 		pthread_join(trains[i].thread, NULL);
