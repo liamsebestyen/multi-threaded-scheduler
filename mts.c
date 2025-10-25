@@ -39,7 +39,6 @@ typedef struct
 	TrainNode *head;
 	TrainNode *tail;
 	int size;
-	pthread_mutex_t lock_queue;
 } StationQueue;
 
 // Global variables - must be declared before functions
@@ -48,10 +47,39 @@ int num_trains = 0;
 struct timespec start_time;
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t start_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER; // Single mutex for all queues
 pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
 int threads_ready = 0;
 int start_flag = 0;
 FILE *output_file = NULL; // Initialize to NULL, open in main()
+
+StationQueue *eastHighPriorityQueue;
+StationQueue *eastLowPriorityQueue;
+StationQueue *westHighPriorityQueue;
+StationQueue *westLowPriorityQueue;
+
+void init_queues()
+{
+	eastHighPriorityQueue = (StationQueue *)malloc(sizeof(StationQueue));
+	eastHighPriorityQueue->head = NULL;
+	eastHighPriorityQueue->tail = NULL;
+	eastHighPriorityQueue->size = 0;
+
+	eastLowPriorityQueue = (StationQueue *)malloc(sizeof(StationQueue));
+	eastLowPriorityQueue->head = NULL;
+	eastLowPriorityQueue->tail = NULL;
+	eastLowPriorityQueue->size = 0;
+
+	westHighPriorityQueue = (StationQueue *)malloc(sizeof(StationQueue));
+	westHighPriorityQueue->head = NULL;
+	westHighPriorityQueue->tail = NULL;
+	westHighPriorityQueue->size = 0;
+
+	westLowPriorityQueue = (StationQueue *)malloc(sizeof(StationQueue));
+	westLowPriorityQueue->head = NULL;
+	westLowPriorityQueue->tail = NULL;
+	westLowPriorityQueue->size = 0;
+}
 
 void enqueue(StationQueue *queue, Train *train)
 {
@@ -60,7 +88,7 @@ void enqueue(StationQueue *queue, Train *train)
 	new_node->next = NULL;
 	new_node->prev = NULL;
 
-	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
+	pthread_mutex_lock(&queue_mutex); // Use global mutex
 
 	if (queue->size == 0)
 	{
@@ -75,7 +103,7 @@ void enqueue(StationQueue *queue, Train *train)
 	}
 	queue->size++;
 
-	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+	pthread_mutex_unlock(&queue_mutex); // Use global mutex
 }
 
 // This will return the removed train for now, may not be needed.
@@ -86,7 +114,7 @@ Train *dequeue(StationQueue *queue)
 		return NULL;
 	}
 
-	pthread_mutex_lock(&queue->lock_queue); // Again maybe we lock this entire function later?
+	pthread_mutex_lock(&queue_mutex); // Use global mutex
 
 	TrainNode *temp = queue->head;
 	queue->head = queue->head->next;
@@ -101,24 +129,49 @@ Train *dequeue(StationQueue *queue)
 	free(temp);
 	queue->size--;
 
-	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+	pthread_mutex_unlock(&queue_mutex); // Use global mutex
 
 	return temp->train;
 }
 
 Train *peek(StationQueue *queue)
 {
-	Train **train;
 	if (queue->size == 0)
 	{
 		return NULL;
 	}
 
-	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
+	pthread_mutex_lock(&queue_mutex); // Use global mutex
 
-	return queue->head->train;
+	Train *result = queue->head->train;
 
-	pthread_mutex_unlock(&queue->lock_queue); // Once again this may be be locked main later.
+	pthread_mutex_unlock(&queue_mutex); // Use global mutex
+
+	return result;
+}
+
+void add_to_queue(Train *train)
+{
+	// Placeholder function to add train to the appropriate queue
+	// based on its direction and priority.
+	// Implementation of queues is not shown here.
+
+	if (train->direction == EAST && train->priority == HIGH)
+	{
+		enqueue(eastHighPriorityQueue, train);
+	}
+	else if (train->direction == EAST && train->priority == LOW)
+	{
+		enqueue(eastLowPriorityQueue, train);
+	}
+	else if (train->direction == WEST && train->priority == HIGH)
+	{
+		enqueue(westHighPriorityQueue, train);
+	}
+	else
+	{
+		enqueue(westLowPriorityQueue, train);
+	}
 }
 
 // Don't love the timer implementation as of now.
@@ -136,7 +189,7 @@ long get_elapsed_tenths()
 	long elapsed_sec = now.tv_sec - start_time.tv_sec;
 	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
 
-	return elapsed_sec * 10 + (elapsed_nsec) / 100000000;
+	return elapsed_sec * 10 + (elapsed_nsec + 50000000) / 100000000;
 }
 
 void format_timestamp(long tenths, char *buffer)
@@ -151,7 +204,7 @@ void format_timestamp(long tenths, char *buffer)
 
 void log_train_ready(Train *train)
 {
-	pthread_mutex_lock(&log_mutex);
+	// pthread_mutex_lock(&log_mutex);
 
 	long elapsed = get_elapsed_tenths();
 	char timestamp[13];
@@ -163,7 +216,7 @@ void log_train_ready(Train *train)
 			train->direction == EAST ? "East" : "West");
 	fflush(output_file);
 
-	pthread_mutex_unlock(&log_mutex);
+	// pthread_mutex_unlock(&log_mutex);
 }
 
 void *train_thread(void *arg)
@@ -187,6 +240,8 @@ void *train_thread(void *arg)
 	// Mark ready and log
 	train->isReady = 1;
 	log_train_ready(train);
+
+	add_to_queue(train);
 
 	return NULL;
 }
@@ -250,6 +305,7 @@ int main(int argc, char *argv[])
 
 	// Initialize timer and output file
 	output_file = fopen("output.txt", "w");
+	init_queues(); // Initialize queues before using them!
 
 	if (!read_file(argv[1]))
 	{
