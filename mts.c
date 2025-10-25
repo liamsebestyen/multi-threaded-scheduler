@@ -3,6 +3,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
+#include <string.h> // Add for strcmp
 
 typedef enum
 {
@@ -313,131 +314,87 @@ void *train_thread(void *arg)
 	return NULL;
 }
 
-void select()
+void update_direction_tracking(Direction dir)
 {
-	/*
-	Plan: Check the four queues with order of priority.
-	1. If two highest priority trains ready
-	*/
-
-	// Next steps, return the selected, logic to check for the starvation.
-	// Gonna need identical logic for the high priority trains as the low. Can you split to functions?
-
-	Train *cross = NULL;
-
-	int num_west_high = westHighPriorityQueue->size;
-	int num_east_high = eastHighPriorityQueue->size;
-	int num_west_low = westLowPriorityQueue->size;
-	int num_east_low = eastLowPriorityQueue->size;
-
-	int num_high = num_east_high + num_west_high;
-	int num_low = num_east_low + num_west_low;
-	int num_east = num_east_high + num_east_low;
-	int num_west = num_west_high + num_west_low;
-
-	if (!(num_east_high || num_west_high || num_east_low || num_west_low))
-		return;
-
-	// case the highest priority trains are the same direction
-
-	if (num_high == 1)
+	secondLastTrainDirection = lastTrainDirection;
+	if (dir == EAST)
 	{
-		if (num_east_high)
-		{
-			cross = dequeue(eastHighPriorityQueue);
-		}
-		else
-		{
-			cross = dequeue(westHighPriorityQueue);
-		}
+		lastTrainDirection = "EAST";
 	}
-	else if (num_high >= 2)
+	else
 	{
-		// We need to look if they are same direction or separate direction.
-		if (num_east_high >= 2)
-		{
-			Train *temp1 = peek(eastHighPriorityQueue);
-			Train *temp2 = peek_two(eastHighPriorityQueue);
-
-			if (temp1->load_time > temp2->load_time)
-			{
-				cross = remove_train(eastHighPriorityQueue, temp2);
-			}
-			else if (temp2->load_time > temp1->load_time)
-			{
-				cross = remove_train(eastHighPriorityQueue, temp1);
-			}
-			else
-			{
-				// They are equal dequeue the one that reads first
-
-				if (temp1->id < temp2->id)
-				{
-					cross = remove_train(eastHighPriorityQueue, temp1);
-				}
-				else
-				{
-					cross = remove_train(eastHighPriorityQueue, temp2);
-				}
-			}
-
-			cross = dequeue(eastHighPriorityQueue);
-		}
-		else if (num_west_high >= 2)
-		{
-			Train *temp1 = peek(westHighPriorityQueue);
-			Train *temp2 = peek_two(westHighPriorityQueue);
-
-			if (temp1->load_time > temp2->load_time)
-			{
-				cross = remove_train(westHighPriorityQueue, temp2);
-			}
-			else if (temp2->load_time > temp1->load_time)
-			{
-				cross = remove_train(westHighPriorityQueue, temp1);
-			}
-			else
-			{
-				// They are equal dequeue the one that reads first
-
-				if (temp1->id < temp2->id)
-				{
-					cross = remove_train(westHighPriorityQueue, temp1);
-				}
-				else
-				{
-					cross = remove_train(westHighPriorityQueue, temp2);
-				}
-			}
-
-			cross = dequeue(westHighPriorityQueue);
-		}
-		else
-		{
-			// They are opposite direction
-			// Check global variables
-			if (lastTrainDirection == NULL)
-			{
-
-				dequeue(westHighPriorityQueue);
-				lastTrainDirection = "WEST";
-			}
-			else if (lastTrainDirection == "EAST")
-			{
-
-				dequeue(westHighPriorityQueue);
-				secondLastTrainDirection = lastTrainDirection;
-				lastTrainDirection = "WEST";
-			}
-			else if (lastTrainDirection == "WEST")
-			{
-
-				dequeue(eastHighPriorityQueue);
-				secondLastTrainDirection = lastTrainDirection;
-				lastTrainDirection = "EAST";
-			}
-		}
+		lastTrainDirection = "WEST";
 	}
+}
+
+Train *select_from_opposite_directions(StationQueue *east_queue, StationQueue *west_queue)
+{
+	Train *selected = NULL;
+
+	// Rule: If no trains have crossed yet, West has priority
+	if (lastTrainDirection == NULL)
+	{
+		selected = dequeue(west_queue);
+		lastTrainDirection = "WEST";
+		return selected;
+	}
+
+	// Rule: Alternate direction to prevent starvation
+	if (strcmp(lastTrainDirection, "EAST") == 0) // Fixed: use strcmp
+	{
+		selected = dequeue(west_queue);
+		update_direction_tracking(WEST);
+	}
+	else // lastTrainDirection == "WEST"
+	{
+		selected = dequeue(east_queue);
+		update_direction_tracking(EAST);
+	}
+
+	return selected;
+}
+
+Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_queue)
+{
+	int num_east = east_queue->size;
+	int num_west = west_queue->size;
+
+	// No trains at this priority level
+	if (num_east == 0 && num_west == 0)
+	{
+		return NULL;
+	}
+
+	// Only one direction has trains
+	if (num_east > 0 && num_west == 0)
+	{
+		Train *selected = dequeue(east_queue);
+		update_direction_tracking(EAST);
+		return selected;
+	}
+
+	if (num_west > 0 && num_east == 0)
+	{
+		Train *selected = dequeue(west_queue);
+		update_direction_tracking(WEST);
+		return selected;
+	}
+
+	// Both directions have trains - check for starvation and alternate
+	return select_from_opposite_directions(east_queue, west_queue);
+}
+
+Train *select_next_train() // Renamed from select()
+{
+	// Check high priority first, then low priority
+	Train *selected = select_from_priority_level(eastHighPriorityQueue, westHighPriorityQueue);
+
+	if (selected == NULL)
+	{
+		selected = select_from_priority_level(eastLowPriorityQueue, westLowPriorityQueue);
+	}
+
+	return selected;
 }
 
 Direction get_direction(char dir_char)
@@ -524,15 +481,27 @@ int main(int argc, char *argv[])
 	pthread_cond_broadcast(&start_cond);
 	pthread_mutex_unlock(&start_mutex);
 
-	// Now main is the controller thread
-	/*
-	1. Monitor the queue's for a ready train (or maybe signal?)
-	2. Select highest priority train
-	3. Train cross (mutex)
-	4. Repeat until ==
-	5. Join all threads
-	*/
+	// Main dispatcher loop
+	int trains_crossed = 0;
+	while (trains_crossed < num_trains)
+	{
+		Train *next_train = select_next_train(); // Updated function call
 
+		if (next_train == NULL)
+		{
+			// No trains ready yet, wait a bit
+			usleep(10000); // 0.01 seconds
+			continue;
+		}
+
+		// Train crosses (for now just count it)
+		trains_crossed++;
+		printf("Train %d is crossing\n", next_train->id);
+
+		// TODO: Signal train to cross, wait for it to finish
+	}
+
+	// Wait for all trains to finish
 	for (int i = 0; i < num_trains; i++)
 	{
 		pthread_join(trains[i].thread, NULL);
