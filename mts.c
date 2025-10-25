@@ -136,7 +136,7 @@ long get_elapsed_tenths()
 	long elapsed_sec = now.tv_sec - start_time.tv_sec;
 	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
 
-	return elapsed_sec * 10 + (elapsed_nsec + 50000000) / 100000000;
+	return elapsed_sec * 10 + (elapsed_nsec) / 100000000;
 }
 
 void format_timestamp(long tenths, char *buffer)
@@ -249,8 +249,7 @@ int main(int argc, char *argv[])
 	}
 
 	// Initialize timer and output file
-	init_timer();
-	output_file = fopen("output.txt", "w"); // Open here, not at global scope
+	output_file = fopen("output.txt", "w");
 
 	if (!read_file(argv[1]))
 	{
@@ -271,6 +270,7 @@ int main(int argc, char *argv[])
 	}
 	// Release all trains at once
 	start_flag = 1;
+	init_timer();
 	pthread_cond_broadcast(&start_cond);
 	pthread_mutex_unlock(&start_mutex);
 
