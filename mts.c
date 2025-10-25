@@ -58,7 +58,7 @@ void enqueue(StationQueue *queue, Train *train)
 	TrainNode *new_node = (TrainNode *)malloc(sizeof(TrainNode));
 	new_node->train = train;
 	new_node->next = NULL;
-	new_node->prev = NULL; // Damn first time opening this file after the breakup...
+	new_node->prev = NULL;
 
 	pthread_mutex_lock(&queue->lock_queue); // Maybe we lock this entire function later?
 
