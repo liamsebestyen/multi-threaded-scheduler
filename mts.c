@@ -335,7 +335,7 @@ void select()
 	int num_east = num_east_high + num_east_low;
 	int num_west = num_west_high + num_west_low;
 
-	if (num_east_high || num_west_high || num_east_low || num_west_low)
+	if (!(num_east_high || num_west_high || num_east_low || num_west_low))
 		return;
 
 	// case the highest priority trains are the same direction
