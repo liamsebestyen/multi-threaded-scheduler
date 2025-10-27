@@ -3,7 +3,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <unistd.h>
-#include <string.h> // Add for strcmp
+#include <string.h>
 
 typedef enum
 {
@@ -48,14 +48,14 @@ int num_trains = 0;
 struct timespec start_time;
 pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t start_mutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER; // Single mutex for all queues
+pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
-pthread_cond_t train_can_cross = PTHREAD_COND_INITIALIZER; // Signal when train can cross
-pthread_mutex_t track_mutex = PTHREAD_MUTEX_INITIALIZER;   // Mutex for main track
-Train *selected_train = NULL;							   // Pointer to train selected to cross
+pthread_cond_t train_can_cross = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t track_mutex = PTHREAD_MUTEX_INITIALIZER;
+Train *selected_train = NULL;
 int threads_ready = 0;
 int start_flag = 0;
-FILE *output_file = NULL; // Initialize to NULL, open in main()
+FILE *output_file = NULL;
 
 char *lastTrainDirection = NULL;
 char *secondToLastTrainDirection = NULL;
@@ -94,10 +94,8 @@ void enqueue(StationQueue *queue, Train *train)
 	new_node->train = train;
 	new_node->next = NULL;
 	new_node->prev = NULL;
-	// printf("Enqueuing train %d to %s queue\n", train->id,
-	// 	   (train->direction == EAST ? (train->priority == HIGH ? "East High Priority" : "East Low Priority") : (train->priority == HIGH ? "West High Priority" : "West Low Priority")));
 
-	pthread_mutex_lock(&queue_mutex); // Use global mutex
+	pthread_mutex_lock(&queue_mutex);
 
 	if (queue->size == 0)
 	{
@@ -115,14 +113,15 @@ void enqueue(StationQueue *queue, Train *train)
 	pthread_mutex_unlock(&queue_mutex); // Use global mutex
 }
 
-// This will return the removed train for now, may not be needed.
+// This will return the removed train
+
 Train *dequeue(StationQueue *queue)
 {
 	pthread_mutex_lock(&queue_mutex); // Lock first
 
 	if (queue->size == 0)
 	{
-		pthread_mutex_unlock(&queue_mutex); // Unlock before return
+		pthread_mutex_unlock(&queue_mutex);
 		return NULL;
 	}
 
@@ -144,7 +143,7 @@ Train *dequeue(StationQueue *queue)
 
 	pthread_mutex_unlock(&queue_mutex);
 
-	return result; // Return the train, not temp->train (already freed!)
+	return result;
 }
 
 Train *remove_train(StationQueue *queue, Train *train)
@@ -168,7 +167,7 @@ Train *remove_train(StationQueue *queue, Train *train)
 			}
 			else
 			{
-				queue->head = current->next; // Update head if needed
+				queue->head = current->next;
 			}
 
 			if (current->next != NULL)
@@ -177,7 +176,7 @@ Train *remove_train(StationQueue *queue, Train *train)
 			}
 			else
 			{
-				queue->tail = current->prev; // Update tail if needed
+				queue->tail = current->prev;
 			}
 
 			free(current);
@@ -248,8 +247,6 @@ void add_to_queue(Train *train)
 	}
 }
 
-// Don't love the timer implementation as of now.
-
 void init_timer()
 {
 	clock_gettime(CLOCK_MONOTONIC, &start_time);
@@ -263,21 +260,20 @@ long get_elapsed_tenths()
 	long elapsed_sec = now.tv_sec - start_time.tv_sec;
 	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
 
-	// Handle negative nanoseconds (if clock wrapped)
 	if (elapsed_nsec < 0)
 	{
 		elapsed_sec--;
 		elapsed_nsec += 1000000000;
 	}
 
-	return elapsed_sec * 10 + elapsed_nsec / 100000000; // No rounding, just truncate
+	return elapsed_sec * 10 + elapsed_nsec / 100000000;
 }
 
 void format_timestamp(long tenths, char *buffer)
 {
-	int hours = tenths / 36000; // 3600 seconds * 10 tenths/sec
+	int hours = tenths / 36000;
 	int remaining = tenths % 36000;
-	int minutes = remaining / 600; // 60 seconds * 10 tenths/sec
+	int minutes = remaining / 600;
 	remaining = remaining % 600;
 	int seconds = remaining / 10;
 	int tenth = remaining % 10;
@@ -338,10 +334,8 @@ void *train_thread(void *arg)
 	}
 	pthread_mutex_unlock(&start_mutex);
 
-	// Simulate loading
 	usleep(train->load_time * 100000);
 
-	// Mark ready and log
 	train->isReady = 1;
 	log_train_ready(train);
 
@@ -399,7 +393,7 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 	}
 
 	// Both directions have trains - alternate based on last direction
-	if (lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST") == 0)
+	if (!(lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST")))
 	{
 		// First train or last was east - go west
 		Train *selected = dequeue(west_queue);
