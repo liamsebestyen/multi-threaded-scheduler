@@ -50,12 +50,15 @@ pthread_mutex_t log_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t start_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER; // Single mutex for all queues
 pthread_cond_t start_cond = PTHREAD_COND_INITIALIZER;
+pthread_cond_t train_can_cross = PTHREAD_COND_INITIALIZER; // Signal when train can cross
+pthread_mutex_t track_mutex = PTHREAD_MUTEX_INITIALIZER;   // Mutex for main track
+Train *selected_train = NULL;							   // Pointer to train selected to cross
 int threads_ready = 0;
 int start_flag = 0;
 FILE *output_file = NULL; // Initialize to NULL, open in main()
 
 char *lastTrainDirection = NULL;
-char *secondLastTrainDirection = NULL;
+char *secondToLastTrainDirection = NULL;
 
 StationQueue *eastHighPriorityQueue;
 StationQueue *eastLowPriorityQueue;
@@ -91,6 +94,8 @@ void enqueue(StationQueue *queue, Train *train)
 	new_node->train = train;
 	new_node->next = NULL;
 	new_node->prev = NULL;
+	// printf("Enqueuing train %d to %s queue\n", train->id,
+	// 	   (train->direction == EAST ? (train->priority == HIGH ? "East High Priority" : "East Low Priority") : (train->priority == HIGH ? "West High Priority" : "West Low Priority")));
 
 	pthread_mutex_lock(&queue_mutex); // Use global mutex
 
@@ -113,14 +118,17 @@ void enqueue(StationQueue *queue, Train *train)
 // This will return the removed train for now, may not be needed.
 Train *dequeue(StationQueue *queue)
 {
+	pthread_mutex_lock(&queue_mutex); // Lock first
+
 	if (queue->size == 0)
 	{
+		pthread_mutex_unlock(&queue_mutex); // Unlock before return
 		return NULL;
 	}
 
-	pthread_mutex_lock(&queue_mutex); // Use global mutex
-
 	TrainNode *temp = queue->head;
+	Train *result = temp->train; // Save the train pointer
+
 	queue->head = queue->head->next;
 	if (queue->head != NULL)
 	{
@@ -128,14 +136,15 @@ Train *dequeue(StationQueue *queue)
 	}
 	else
 	{
-		queue->tail = NULL; // Queue is now empty
+		queue->tail = NULL;
 	}
+
 	free(temp);
 	queue->size--;
 
-	pthread_mutex_unlock(&queue_mutex); // Use global mutex
+	pthread_mutex_unlock(&queue_mutex);
 
-	return temp->train;
+	return result; // Return the train, not temp->train (already freed!)
 }
 
 Train *remove_train(StationQueue *queue, Train *train)
@@ -220,9 +229,6 @@ Train *peek_two(StationQueue *queue)
 
 void add_to_queue(Train *train)
 {
-	// Placeholder function to add train to the appropriate queue
-	// based on its direction and priority.
-	// Implementation of queues is not shown here.
 
 	if (train->direction == EAST && train->priority == HIGH)
 	{
@@ -257,23 +263,30 @@ long get_elapsed_tenths()
 	long elapsed_sec = now.tv_sec - start_time.tv_sec;
 	long elapsed_nsec = now.tv_nsec - start_time.tv_nsec;
 
-	return elapsed_sec * 10 + (elapsed_nsec + 50000000) / 100000000;
+	// Handle negative nanoseconds (if clock wrapped)
+	if (elapsed_nsec < 0)
+	{
+		elapsed_sec--;
+		elapsed_nsec += 1000000000;
+	}
+
+	return elapsed_sec * 10 + elapsed_nsec / 100000000; // No rounding, just truncate
 }
 
 void format_timestamp(long tenths, char *buffer)
 {
-	int minutes = tenths / 600; // 60 seconds * 10 tenths/sec
-	int remaining = tenths % 600;
+	int hours = tenths / 36000; // 3600 seconds * 10 tenths/sec
+	int remaining = tenths % 36000;
+	int minutes = remaining / 600; // 60 seconds * 10 tenths/sec
+	remaining = remaining % 600;
 	int seconds = remaining / 10;
 	int tenth = remaining % 10;
 
-	sprintf(buffer, "%02d:%02d.%d", minutes, seconds, tenth);
+	sprintf(buffer, "%02d:%02d:%02d.%d", hours, minutes, seconds, tenth);
 }
 
 void log_train_ready(Train *train)
 {
-	// pthread_mutex_lock(&log_mutex);
-
 	long elapsed = get_elapsed_tenths();
 	char timestamp[13];
 	format_timestamp(elapsed, timestamp);
@@ -283,8 +296,32 @@ void log_train_ready(Train *train)
 			train->id,
 			train->direction == EAST ? "East" : "West");
 	fflush(output_file);
+}
 
-	// pthread_mutex_unlock(&log_mutex);
+void log_train_crossing(Train *train)
+{
+	long elapsed = get_elapsed_tenths();
+	char timestamp[13];
+	format_timestamp(elapsed, timestamp);
+
+	fprintf(output_file, "%s Train %2d is ON the main track going %s\n",
+			timestamp,
+			train->id,
+			train->direction == EAST ? "East" : "West");
+	fflush(output_file);
+}
+
+void log_train_complete(Train *train)
+{
+	long elapsed = get_elapsed_tenths();
+	char timestamp[13];
+	format_timestamp(elapsed, timestamp);
+
+	fprintf(output_file, "%s Train %2d is OFF the main track after going %s\n",
+			timestamp,
+			train->id,
+			train->direction == EAST ? "East" : "West");
+	fflush(output_file);
 }
 
 void *train_thread(void *arg)
@@ -294,8 +331,7 @@ void *train_thread(void *arg)
 	// Signal that this thread is ready
 	pthread_mutex_lock(&start_mutex);
 	threads_ready++;
-	pthread_cond_broadcast(&start_cond); // Broadcast instead of signal
-	// Wait for start signal
+	pthread_cond_broadcast(&start_cond);
 	while (!start_flag)
 	{
 		pthread_cond_wait(&start_cond, &start_mutex);
@@ -311,47 +347,29 @@ void *train_thread(void *arg)
 
 	add_to_queue(train);
 
+	// Wait for THIS specific train to be selected
+	pthread_mutex_lock(&track_mutex);
+	while (selected_train != train)
+	{
+		pthread_cond_wait(&train_can_cross, &track_mutex);
+	}
+
+	// This train was selected - cross the track
+	log_train_crossing(train);
+	usleep(train->cross_time * 100000);
+	log_train_complete(train);
+
+	// Done crossing
+	selected_train = NULL;
+	pthread_mutex_unlock(&track_mutex);
+
 	return NULL;
 }
 
 void update_direction_tracking(Direction dir)
 {
-	secondLastTrainDirection = lastTrainDirection;
-	if (dir == EAST)
-	{
-		lastTrainDirection = "EAST";
-	}
-	else
-	{
-		lastTrainDirection = "WEST";
-	}
-}
-
-Train *select_from_opposite_directions(StationQueue *east_queue, StationQueue *west_queue)
-{
-	Train *selected = NULL;
-
-	// Rule: If no trains have crossed yet, West has priority
-	if (lastTrainDirection == NULL)
-	{
-		selected = dequeue(west_queue);
-		lastTrainDirection = "WEST";
-		return selected;
-	}
-
-	// Rule: Alternate direction to prevent starvation
-	if (strcmp(lastTrainDirection, "EAST") == 0) // Fixed: use strcmp
-	{
-		selected = dequeue(west_queue);
-		update_direction_tracking(WEST);
-	}
-	else // lastTrainDirection == "WEST"
-	{
-		selected = dequeue(east_queue);
-		update_direction_tracking(EAST);
-	}
-
-	return selected;
+	secondToLastTrainDirection = lastTrainDirection;
+	lastTrainDirection = (dir == EAST) ? "EAST" : "WEST";
 }
 
 Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_queue)
@@ -380,14 +398,78 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 		return selected;
 	}
 
-	// Both directions have trains - check for starvation and alternate
-	return select_from_opposite_directions(east_queue, west_queue);
+	// Both directions have trains - alternate based on last direction
+	if (lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST") == 0)
+	{
+		// First train or last was east - go west
+		Train *selected = dequeue(west_queue);
+		update_direction_tracking(WEST);
+		return selected;
+	}
+	else
+	{
+		// Last was west - go east
+		Train *selected = dequeue(east_queue);
+		update_direction_tracking(EAST);
+		return selected;
+	}
 }
 
-Train *select_next_train() // Renamed from select()
+Train *check_starvation()
+{
+	// Can't check starvation if we haven't had 2 trains yet
+	if (lastTrainDirection == NULL || secondToLastTrainDirection == NULL)
+	{
+		return NULL;
+	}
+
+	// Check if last two trains went same direction
+	if (strcmp(lastTrainDirection, secondToLastTrainDirection) == 0)
+	{
+		// Force opposite direction
+		if (strcmp(lastTrainDirection, "EAST") == 0)
+		{
+			// Last two were east, must go west
+			Train *selected = dequeue(westHighPriorityQueue);
+			if (selected == NULL)
+			{
+				selected = dequeue(westLowPriorityQueue);
+			}
+			if (selected != NULL)
+			{
+				update_direction_tracking(WEST);
+			}
+			return selected;
+		}
+		else
+		{
+			// Last two were west, must go east
+			Train *selected = dequeue(eastHighPriorityQueue);
+			if (selected == NULL)
+			{
+				selected = dequeue(eastLowPriorityQueue);
+			}
+			if (selected != NULL)
+			{
+				update_direction_tracking(EAST);
+			}
+			return selected;
+		}
+	}
+
+	return NULL;
+}
+
+Train *select_next_train()
 {
 	// Check high priority first, then low priority
-	Train *selected = select_from_priority_level(eastHighPriorityQueue, westHighPriorityQueue);
+	Train *selected = check_starvation();
+	if (selected != NULL)
+	{
+		return selected;
+	}
+
+	selected = select_from_priority_level(eastHighPriorityQueue, westHighPriorityQueue);
 
 	if (selected == NULL)
 	{
@@ -485,7 +567,7 @@ int main(int argc, char *argv[])
 	int trains_crossed = 0;
 	while (trains_crossed < num_trains)
 	{
-		Train *next_train = select_next_train(); // Updated function call
+		Train *next_train = select_next_train();
 
 		if (next_train == NULL)
 		{
@@ -494,11 +576,19 @@ int main(int argc, char *argv[])
 			continue;
 		}
 
-		// Train crosses (for now just count it)
-		trains_crossed++;
-		printf("Train %d is crossing\n", next_train->id);
+		// Signal this train to cross
+		pthread_mutex_lock(&track_mutex);
+		selected_train = next_train;
+		pthread_cond_broadcast(&train_can_cross);
+		pthread_mutex_unlock(&track_mutex);
 
-		// TODO: Signal train to cross, wait for it to finish
+		// Wait for train to finish crossing
+		while (selected_train != NULL)
+		{
+			usleep(10000);
+		}
+
+		trains_crossed++;
 	}
 
 	// Wait for all trains to finish
