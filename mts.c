@@ -371,13 +371,11 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 	int num_east = east_queue->size;
 	int num_west = west_queue->size;
 
-	// No trains at this priority level
 	if (num_east == 0 && num_west == 0)
 	{
 		return NULL;
 	}
 
-	// Only one direction has trains
 	if (num_east > 0 && num_west == 0)
 	{
 		Train *selected = dequeue(east_queue);
@@ -395,14 +393,12 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 	// Both directions have trains - alternate based on last direction
 	if (!(lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST")))
 	{
-		// First train or last was east - go west
 		Train *selected = dequeue(west_queue);
 		update_direction_tracking(WEST);
 		return selected;
 	}
 	else
 	{
-		// Last was west - go east
 		Train *selected = dequeue(east_queue);
 		update_direction_tracking(EAST);
 		return selected;
