@@ -391,7 +391,7 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 	}
 
 	// Both directions have trains - alternate based on last direction
-	if (!(lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST")))
+	if (lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST"))
 	{
 		Train *selected = dequeue(west_queue);
 		update_direction_tracking(WEST);
