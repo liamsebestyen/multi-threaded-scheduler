@@ -287,7 +287,7 @@ void log_train_ready(Train *train)
 	char timestamp[13];
 	format_timestamp(elapsed, timestamp);
 
-	fprintf(output_file, "%s Train %2d is ready to go %s\n",
+	fprintf(output_file, "%s Train %2d is ready to go %4s\n",
 			timestamp,
 			train->id,
 			train->direction == EAST ? "East" : "West");
@@ -300,7 +300,7 @@ void log_train_crossing(Train *train)
 	char timestamp[13];
 	format_timestamp(elapsed, timestamp);
 
-	fprintf(output_file, "%s Train %2d is ON the main track going %s\n",
+	fprintf(output_file, "%s Train %2d is ON the main track going %4s\n",
 			timestamp,
 			train->id,
 			train->direction == EAST ? "East" : "West");
@@ -313,7 +313,7 @@ void log_train_complete(Train *train)
 	char timestamp[13];
 	format_timestamp(elapsed, timestamp);
 
-	fprintf(output_file, "%s Train %2d is OFF the main track after going %s\n",
+	fprintf(output_file, "%s Train %2d is OFF the main track after going %4s\n",
 			timestamp,
 			train->id,
 			train->direction == EAST ? "East" : "West");
@@ -391,7 +391,7 @@ Train *select_from_priority_level(StationQueue *east_queue, StationQueue *west_q
 	}
 
 	// Both directions have trains - alternate based on last direction
-	if (lastTrainDirection == NULL || strcmp(lastTrainDirection, "EAST"))
+	if (lastTrainDirection == NULL || !strcmp(lastTrainDirection, "EAST"))
 	{
 		Train *selected = dequeue(west_queue);
 		update_direction_tracking(WEST);
